@@ -1,0 +1,556 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>NICAR 2022 Database Optimization with Brandon Roberts</title>
+
+		<link rel="stylesheet" href="dist/reset.css">
+		<link rel="stylesheet" href="dist/reveal.css">
+		<link rel="stylesheet" href="static/brandon.css">
+
+		<!-- Theme used for syntax highlighted code -->
+		<link rel="stylesheet" href="plugin/highlight/monokai.css">
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+
+        <section data-markdown>
+          <textarea data-template>
+### Um Yes Hello
+- I'm Brandon Roberts
+- Data Journalist / Open Source Developer
+- Freelance: bxroberts.org
+
+[https://tinyurl.com/3xm24bn2](https://colab.research.google.com/drive/1LqxhsN9YwhFVWCA4uzIJfCja-cl5LuCm?usp=sharing)
+---
+
+## Optimization
+- Going to teach principles of optimization with eye toward big data
+  - Things that work at small scale don't always scale
+	- Things I teach here (on small data) can be applied to large datasets
+	- Using PostgreSQL because it's diverse, has many capabilities of big data systems
+---
+
+<video data-autoplay src="media/query-tool.mov"></video>
+
+Note:
+- Postgres.app, pgAdmin 4
+	- right click things to get to menus
+	- query tool is what we're going to be using
+---
+```
+SELECT "column" FROM table" WHERE "column" != 'string text';
+```
+- Syntax Tips:
+	- Table, Column, Index names go in double quotes
+	- Strings go in single quotes
+	- F5 - Run query
+	- F7 - Graphical query explain (use dropdown, select Verbose, Costs, Summary)
+
+```
+/* multi line comment */
+-- single line comment
+```
+---
+
+```
+select * from "emails-text" limit 10;
+```
+
+<video data-autoplay src="media/explain.mov"></video>
+
+- Enter query, press F7
+
+```
+												QUERY PLAN                           
+--------------------------------------------------------------
+Seq Scan on stocks  (cost=0.00..1548.88 rows=1356 width=415)
+ Filter: (jdoc @> '{"cap_gains_over_200_usd": true}'::jsonb)
+(2 rows)
+```
+
+Note:
+- `explain` gives query estimates, `explain analyze` RUNS
+	- read from inside out, button up
+- `cost` has two numbers separated by `..`: `startup..total`
+- cost in units of disk page time
+  - for comparison, a random page on disk is `4.0`
+- good SO response [https://stackoverflow.com/a/35510927](https://stackoverflow.com/a/35510927)
+---
+
+<video data-autoplay src="media/sql-pane.mov"></video>
+- Choosing the appropriate data type is first step to optimization
+
+---
+
+- Main principles in optimization
+	- trading storage for time/compute
+	- avoid full table scans
+	- avoid doing things on-the-fly
+---
+
+- Example of poorly optimized tells:
+	- Group/count emails by year (no index):
+
+```
+EXPLAIN ANALYZE
+	SELECT "year",
+		COUNT("year")
+	FROM "emails-text"
+	WHERE "year" = 2020
+	GROUP BY "year";
+	
+```
+---
+
+Output:
+
+```                               QUERY PLAN                                                                   
+-------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.00..15977.57 rows=8 width=13) (actual time=130.861..130.862 rows=1 loops=1)
+   Group Key: year
+   ->  Seq Scan on "emails-text"  (cost=0.00..15867.69 rows=21960 width=5) (actual time=39.176..121.122 rows=22097 loops=1)
+         Filter: (year = '2020'::numeric)
+         Rows Removed by Filter: 92678
+ Planning Time: 0.306 ms
+ Execution Time: 130.936 ms
+(7 rows)
+```
+---
+
+- Optimization Principle: Trade storage for speed
+	- Indexes are important in big data and optimization
+	- They store locations of things based on value
+	- Trade storage for speed
+---
+
+- Let's add an index on year
+	- And see improvement when we plan ahead
+
+```  
+CREATE INDEX "emails-text-year" ON "emails-text" ("year");
+
+```
+---
+
+- Re-run group count on emails by year:
+	- Query tool: Query History -> Select from list, right tab copy to query editor
+
+Output:
+
+```                               QUERY PLAN                                                                   
+-------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.42..738.60 rows=8 width=13) (actual time=17.197..17.199 rows=1 loops=1)
+   Group Key: year
+   ->  Index Only Scan using "emails-text-year" on "emails-text"  (cost=0.42..628.72 rows=21960 width=5) (actual time=0.148..8.160 rows=22097 loops=1)
+         Index Cond: (year = '2020'::numeric)
+         Heap Fetches: 0
+ Planning Time: 1.065 ms
+ Execution Time: 17.291 ms
+(7 rows)
+```
+
+We've eliminated the non-indexed filter and table scan and reduced our query time by ~750%.
+---
+
+- Postgres has variety of indexes for data types
+	- Other SQL not so much (MySQL)
+	- Default index: B-Tree
+		- great general purpose
+		- great when you don't know usage pattern
+---
+
+- Optimization Principles:
+	- Do things once: Avoid nested loops
+  - Take only what you need: Avoid reading unwanted data
+---
+
+- Example of query resulting in nested scan
+
+```
+EXPLAIN 
+SELECT *
+FROM "emails-text" AS E
+JOIN "travel-disclosures" AS T ON T."Year" = E."year"
+ORDER BY E."year";
+
+```
+
+```                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Merge Join  (cost=1732.02..2003550.53 rows=131549950 width=1085)
+   Merge Cond: (e.year = t."Year")
+   ->  Index Scan using "emails-text-year" on "emails-text" e  (cost=0.42..28900.77 rows=114771 width=951)
+   ->  Sort  (cost=1116.68..1145.20 rows=11406 width=134)
+         Sort Key: t."Year"
+         ->  Seq Scan on "travel-disclosures" t  (cost=0.00..348.06 rows=11406 width=134)
+(6 rows)
+```
+---
+
+# 😱
+---
+
+- Let's add index on travel disclosures table
+
+```
+CREATE INDEX "travel-disclosures-Year" ON "travel-disclosures" ("Year");
+```
+---
+
+- Rerun query
+
+```                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Merge Join  (cost=615.62..2003076.04 rows=131549950 width=1085)
+   Merge Cond: (e.year = t."Year")
+   ->  Index Scan using "emails-text-year" on "emails-text" e  (cost=0.42..28900.77 rows=114771 width=951)
+   ->  Materialize  (cost=0.29..707.67 rows=11406 width=134)
+         ->  Index Scan using "travel-disclosures-Year" on "travel-disclosures" t  (cost=0.29..679.16 rows=11406 width=134)
+(5 rows)
+```
+---
+
+- When we plan ahead, we get better results
+- Index columns used with
+	- Order by
+	- Where
+  - Group by
+---
+
+- More complex query
+- Result illustrating principle
+
+```
+EXPLAIN
+SELECT *
+FROM "emails-text" AS E
+JOIN "travel-disclosures" AS T ON T."FilerName" = E."name"
+WHERE T."MemberName" = 'McCarthy, Kevin'
+ORDER BY E."year" DESC
+LIMIT 100;
+```
+---
+
+```                                                        QUERY PLAN                                                        
+--------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..16078.68 rows=100 width=1085)
+   ->  Nested Loop  (cost=0.42..318510.83 rows=1981 width=1085)
+         Join Filter: ((e.name)::text = (t."FilerName")::text)
+         ->  Index Scan Backward using "emails-text-year" on "emails-text" e  (cost=0.42..28900.83 rows=114775 width=951)
+         ->  Materialize  (cost=0.00..377.42 rows=168 width=134)
+               ->  Seq Scan on "travel-disclosures" t  (cost=0.00..376.58 rows=168 width=134)
+                     Filter: (("MemberName")::text = 'McCarthy, Kevin'::text)
+(7 rows)
+```
+
+- Note the filters and full table scan
+---
+
+- B-Tree good when we don't know the usage pattern, but what if we do?
+	- We can plan ahead for specific usages (names equal)
+---
+
+- Hash indexes
+	- Optimized for equality checks
+
+```
+CREATE INDEX "travel-disclosures-MemberName-hash" ON "travel-disclosures" USING HASH ("MemberName");
+CREATE INDEX "emails-text-name-hash" ON "emails-text" USING HASH ("name");
+```
+---
+
+- Re-run query
+
+```                                                        QUERY PLAN                                                         
+---------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=8984.35..8984.60 rows=100 width=1085)
+   ->  Sort  (cost=8984.35..8989.30 rows=1981 width=1085)
+         Sort Key: e.year DESC
+         ->  Nested Loop  (cost=5.31..8908.64 rows=1981 width=1085)
+               ->  Bitmap Heap Scan on "travel-disclosures" t  (cost=5.30..232.60 rows=168 width=134)
+                     Recheck Cond: (("MemberName")::text = 'McCarthy, Kevin'::text)
+                     ->  Bitmap Index Scan on "travel-disclosures-MemberName-hash"  (cost=0.00..5.26 rows=168 width=0)
+                           Index Cond: (("MemberName")::text = 'McCarthy, Kevin'::text)
+               ->  Memoize  (cost=0.01..52.09 rows=13 width=951)
+                     Cache Key: t."FilerName"
+                     ->  Index Scan using "emails-text-name-hash" on "emails-text" e  (cost=0.00..52.08 rows=13 width=951)
+                           Index Cond: ((name)::text = (t."FilerName")::text)
+(12 rows)
+```
+---
+
+- Hash indexes great where you're doing direct comparisons and lookups
+	- `"MemberName" = 'McCarthy, Kevin'`
+---
+
+- Optimization Principle: Do things in steps
+	- Materialized views
+		- Pre-computed table
+	- Related principle: do things once
+---
+
+- New query:
+	- "Top Travelers' Emails op to a Week After a Travel"
+
+```
+CREATE FUNCTION FIRSTLAST(text) RETURNS text AS $$
+	SELECT REGEXP_REPLACE(REGEXP_REPLACE($1,'[^A-Za-z\.,\s]', ''), '^([^\s]+), ([^\s]+)\s*.*',  '\2 \1');
+$$ LANGUAGE SQL;
+
+```
+
+```
+SELECT T."MemberName",
+	E."name",
+  E.date::timestamp with time zone - T."ReturnDate"::timestamp with time zone AS "since-return",
+	T."TravelSponsor",
+	E."subject",
+	E."body"
+FROM "travel-disclosures" AS T
+JOIN "emails-text" AS E ON E.NAME = FIRSTLAST(T."MemberName")
+WHERE
+	(E."date"::TIMESTAMPTZ - T."ReturnDate"::TIMESTAMPTZ) < '1 week'::interval
+	AND (E."date"::TIMESTAMPTZ - T."ReturnDate"::TIMESTAMPTZ) > '0 days'::interval;
+```
+---
+
+```                                   QUERY PLAN                                                                                                               			-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Nested Loop  (cost=0.01..66233.85 rows=16303 width=945)
+ ->  Seq Scan on "travel-disclosures" t  (cost=0.00..348.06 rows=11406 width=55)
+ ->  Index Scan using "emails-text-name-hash" on "emails-text" e  (cost=0.01..5.76 rows=1 width=886)
+       Index Cond: ((name)::text = regexp_replace(regexp_replace((t."MemberName")::text, '[^A-Za-z\.,\s]'::text, ''::text), '^([^\s]+), ([^\s]+)\s*.*'::text, '\2 \1'::text))
+       Filter: ((((date)::timestamp with time zone - (t."ReturnDate")::timestamp with time zone) < '7 days'::interval) AND (((date)::timestamp with time zone - (t."ReturnDate")::timestamp with time zone) > '00:00:00'::interval))
+(5 rows)
+```
+
+- Result
+	- Uses some indexes on email, but ...
+	- Table scan, could do more
+---
+
+- Materialized view w/ index
+	- get around no indexes cross-table
+
+
+```
+CREATE MATERIALIZED VIEW IF NOT EXISTS "email-travel-return-diff"
+AS
+ SELECT t."MemberName" AS "travel-MemberName",
+    e.name AS "email-name",
+    e.date::timestamp with time zone - t."ReturnDate"::timestamp with time zone AS "since-return",
+    t."TravelSponsor" AS "travel-TravelSponsor",
+    e.subject AS "email-subject",
+    e.body AS "email-body"
+   FROM "travel-disclosures" t
+     JOIN "emails-text" e ON e.name::text = firstlast(t."MemberName"::text)
+WITH DATA;
+CREATE INDEX "email-travel-return-diff-since-return" ON "email-travel-return-diff" ("since-return");
+
+```
+---
+
+- New equivalent query
+
+```
+SELECT "travel-MemberName", *
+FROM "email-travel-return-diff" AS ET
+WHERE "since-return" > '0 days'::interval
+	AND "since-return" < '1 week'::interval;
+
+```
+---
+
+```                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using "email-travel-return-diff-since-return" on "email-travel-return-diff" et  (cost=0.42..658.35 rows=301 width=1032)
+   Index Cond: (("since-return" > '00:00:00'::interval) AND ("since-return" < '7 days'::interval))
+(2 rows)
+
+- We can do exploratory analysis in optimized environment
+	- Build from there
+```
+---
+
+```
+SELECT *
+FROM "email-travel-return-diff" AS ET
+WHERE "since-return" > '0 days'::interval
+	AND "since-return" < '1 week'::interval
+	AND TO_TSVECTOR("email-body") @@ TO_TSQUERY('climate');
+
+```
+
+```                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using "email-travel-return-diff-since-return" on "email-travel-return-diff" et  (cost=0.42..809.60 rows=2 width=1018)
+   Index Cond: (("since-return" > '00:00:00'::interval) AND ("since-return" < '7 days'::interval))
+   Filter: (to_tsvector(("email-body")::text) @@ to_tsquery('climate'::text))
+(3 rows)
+```
+---
+
+
+- Optimization Principles: Right tool for the job (pt. 1)
+	- Inverted Indexing
+		- Elasticsearch, NoSQL, Custom DBs
+
+```
+ALTER TABLE "emails-text"
+    ADD COLUMN "search-index-column" tsvector
+               GENERATED ALWAYS AS (to_tsvector('english', coalesce("subject", '') || ' ' || coalesce("body", ''))) STORED;
+CREATE INDEX "search-index-column-gin" ON "emails-text" USING GIN ("search-index-column");
+
+```
+---
+
+- Let's do full text search against the table
+
+```
+SELECT *
+FROM "emails-text"
+WHERE "search-index-column" @@ TO_TSQUERY('climate & fraud');
+
+```
+---
+
+```                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Bitmap Heap Scan on "emails-text"  (cost=44.27..56.93 rows=3 width=983)
+   Recheck Cond: ("search-index-column" @@ to_tsquery('climate & fraud'::text))
+   ->  Bitmap Index Scan on "search-index-column-gin"  (cost=0.00..44.27 rows=3 width=0)
+         Index Cond: ("search-index-column" @@ to_tsquery('climate & fraud'::text))
+(4 rows)
+```
+---
+
+- Optimization Principles: Right tool for the job (pt. 2)
+	- NoSQL
+	- Key value lookup
+	- Optimization based around finding ideal key structure
+---
+
+- Here's a Postgres JSON Key-Value Lookup
+	- Not optimized
+
+```
+SELECT *
+FROM "stocks"
+WHERE "jdoc" @> '{"cap_gains_over_200_usd": true}'::JSONB;
+
+```
+---
+
+```                          QUERY PLAN                           
+---------------------------------------------------------------
+ Seq Scan on stocks  (cost=0.00..1548.88 rows=1356 width=415)
+   Filter: (jdoc @> '{"cap_gains_over_200_usd": true}'::jsonb)
+(2 rows)
+```
+
+```
+CREATE INDEX "stocks-index-gin" ON "stocks" USING GIN ("jdoc");
+```
+
+- Re-run
+---
+
+```                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Bitmap Heap Scan on stocks  (cost=30.51..1367.39 rows=1356 width=415)
+   Recheck Cond: (jdoc @> '{"cap_gains_over_200_usd": true}'::jsonb)
+   ->  Bitmap Index Scan on "stocks-index-gin"  (cost=0.00..30.17 rows=1356 width=0)
+         Index Cond: (jdoc @> '{"cap_gains_over_200_usd": true}'::jsonb)
+(4 rows)
+```
+
+- More optimized queries possible
+	- Good improvement, but with NoSQL we can do more
+	- Next Improvement: Rely on key-value structure
+---
+
+- Example on what you can do for optimization:
+
+```
+ALTER TABLE "stocks"
+	ADD COLUMN "min-amount" int
+		GENERATED ALWAYS AS (
+
+	(REGEXP_REPLACE((REGEXP_REPLACE(
+		("jdoc"->'amount')::text,
+		'\$([0-9,]+)\s*[-+]*\s*\$*([0-9,]*)',
+		'\1'
+	))::text || '-1', '[^0-9]', '', 'g'))::int
+			
+) STORED;
+CREATE INDEX "stocks-min-amount" ON "stocks" ("min-amount");
+```
+---
+
+Can you think of access patterns and ways to optimize?
+
+```
+'ptr_link', 'ticker',
+'district', 'owner',
+'disclosure_date', 'senator',
+'cap_gains_over_200_usd',
+'representative', 'amount',
+'transaction_date', 'asset_type',
+'asset_description', 'comment',
+'disclosure_year', 'type'
+```
+---
+
+Example queries
+
+```
+SELECT *
+FROM "stocks"
+WHERE "min-amount" > 5000001
+ORDER BY "min-amount" DESC;
+```
+
+```
+SELECT "jdoc"->'comment'
+FROM "stocks"
+WHERE "jdoc" ? 'comment' and ("jdoc"->'comment')::text like '%Child%';
+```
+
+```
+SELECT "jdoc"->'comment'
+FROM "stocks"
+WHERE "jdoc" ? 'comment' and ("jdoc"->'comment')::text != '"--"';
+```
+---
+
+# The End
+
+- Q&A
+- Got DB Problems?
+---
+          </textarea>
+        </section>
+
+			</div>
+		</div>
+
+		<script src="dist/reveal.js"></script>
+		<script src="plugin/notes/notes.js"></script>
+		<script src="plugin/markdown/markdown.js"></script>
+		<script src="plugin/highlight/highlight.js"></script>
+		<script>
+			// More info about initialization & config:
+			// - https://revealjs.com/initialization/
+			// - https://revealjs.com/config/
+			Reveal.initialize({
+				hash: true,
+
+				// Learn about plugins: https://revealjs.com/plugins/
+				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes ]
+			});
+		</script>
+	</body>
+</html>
