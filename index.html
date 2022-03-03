@@ -7,6 +7,12 @@
 		<title>NICAR 2022 Database Optimization with Brandon Roberts</title>
 
 		<link rel="stylesheet" href="dist/reset.css">
+		<style>
+		/* Prevent flickering  w/ dark backgrounds */
+		  p, li, ul, ol {
+		    color: white;
+		  }
+		</style>
 		<link rel="stylesheet" href="dist/reveal.css">
 		<link rel="stylesheet" href="static/brandon.css">
 
@@ -25,6 +31,10 @@
 - Freelance: bxroberts.org
 
 [https://tinyurl.com/3xm24bn2](https://colab.research.google.com/drive/1LqxhsN9YwhFVWCA4uzIJfCja-cl5LuCm?usp=sharing)
+
+```
+git clone https://github.com/brandonrobertz/nicar2022
+```
 ---
 
 ## Optimization
@@ -33,6 +43,8 @@
 	- Things I teach here (on small data) can be applied to large datasets
 	- Using PostgreSQL because it's diverse, has many capabilities of big data systems
 ---
+
+Query Tool
 
 <video data-autoplay src="media/query-tool.mov"></video>
 
@@ -56,57 +68,56 @@ SELECT "column" FROM table" WHERE "column" != 'string text';
 ```
 ---
 
+
+SQL Pane
+
+<video data-autoplay src="media/sql-pane.mov"></video>
+
+Notes:
+- Go to SQL pane
+- Choosing the appropriate data type is first step to optimization
+
+---
 ```
 select * from "emails-text" limit 10;
 ```
 
-<video data-autoplay src="media/explain.mov"></video>
-
-- Enter query, press F7
+<img data-autoplay style="max-height: 70vh" src="media/explain.png" />
 
 ```
-												QUERY PLAN                           
---------------------------------------------------------------
-Seq Scan on stocks  (cost=0.00..1548.88 rows=1356 width=415)
- Filter: (jdoc @> '{"cap_gains_over_200_usd": true}'::jsonb)
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Limit  (cost=0.00..1.45 rows=10 width=983)
+   ->  Seq Scan on "emails-text"  (cost=0.00..16664.75 rows=114775 width=983)
 (2 rows)
 ```
 
 Note:
+- Enter query, press F7
 - `explain` gives query estimates, `explain analyze` RUNS
 	- read from inside out, button up
 - `cost` has two numbers separated by `..`: `startup..total`
+---
+
+Cost Explained
+
+<img style="max-height: 80vh" src="media/c64-disks.gif" />
+
+Note:
 - cost in units of disk page time
   - for comparison, a random page on disk is `4.0`
 - good SO response [https://stackoverflow.com/a/35510927](https://stackoverflow.com/a/35510927)
 ---
 
-<video data-autoplay src="media/sql-pane.mov"></video>
-- Choosing the appropriate data type is first step to optimization
-
----
-
-- Main principles in optimization
-	- trading storage for time/compute
-	- avoid full table scans
-	- avoid doing things on-the-fly
----
-
-- Example of poorly optimized tells:
-	- Group/count emails by year (no index):
+Poorly optimized tells
 
 ```
-EXPLAIN ANALYZE
-	SELECT "year",
+SELECT "year",
 		COUNT("year")
 	FROM "emails-text"
 	WHERE "year" = 2020
-	GROUP BY "year";
-	
+	GROUP BY "year";	
 ```
----
-
-Output:
 
 ```                               QUERY PLAN                                                                   
 -------------------------------------------------------------------------------
@@ -121,10 +132,16 @@ Output:
 ```
 ---
 
-- Optimization Principle: Trade storage for speed
-	- Indexes are important in big data and optimization
-	- They store locations of things based on value
-	- Trade storage for speed
+#### Optimization Principle
+
+## Trade storage for speed
+
+- indexes are important
+- locations of things based on value
+
+Note:
+- indexes backbone of optimization
+- extension of algorithms generally
 ---
 
 - Let's add an index on year
@@ -132,14 +149,11 @@ Output:
 
 ```  
 CREATE INDEX "emails-text-year" ON "emails-text" ("year");
-
 ```
 ---
 
 - Re-run group count on emails by year:
 	- Query tool: Query History -> Select from list, right tab copy to query editor
-
-Output:
 
 ```                               QUERY PLAN                                                                   
 -------------------------------------------------------------------------------
@@ -154,18 +168,33 @@ Output:
 ```
 
 We've eliminated the non-indexed filter and table scan and reduced our query time by ~750%.
+
+Note:
+- Previous tot cost: 15977.57
 ---
+
 
 - Postgres has variety of indexes for data types
-	- Other SQL not so much (MySQL)
-	- Default index: B-Tree
-		- great general purpose
-		- great when you don't know usage pattern
+
+<img style="max-height: 50%" src="media/b-tree.svg" />
+
+
+- Default index: B-Tree
+  - great general purpose
+  - great when you don't know usage pattern
+
+<span style="font-size: 0.4em;">Image Attribution: CyHawk https://commons.wikimedia.org/wiki/File:B-tree.svg</span>
+
+Note:
+- Wondering why we're not using MySQL? This is why. Lack of features, which we'll get to later.
 ---
 
-- Optimization Principles:
-	- Do things once: Avoid nested loops
-  - Take only what you need: Avoid reading unwanted data
+#### Optimization Principle
+
+## Do things once
+
+- Avoid nested loops
+- Take only what you need: Avoid reading unwanted data
 ---
 
 - Example of query resulting in nested scan
@@ -189,19 +218,21 @@ ORDER BY E."year";
          ->  Seq Scan on "travel-disclosures" t  (cost=0.00..348.06 rows=11406 width=134)
 (6 rows)
 ```
----
 
 # 😱
+
+Note:
+- Cost: Two million sequential block fetches
 ---
 
 - Let's add index on travel disclosures table
 
 ```
-CREATE INDEX "travel-disclosures-Year" ON "travel-disclosures" ("Year");
+CREATE INDEX "travel-disclosures-Year"
+  ON "travel-disclosures" ("Year");
 ```
----
 
-- Rerun query
+- Re-run query
 
 ```                                                         QUERY PLAN                                                         
 ----------------------------------------------------------------------------------------------------------------------------
@@ -214,18 +245,22 @@ CREATE INDEX "travel-disclosures-Year" ON "travel-disclosures" ("Year");
 ```
 ---
 
-- When we plan ahead, we get better results
+#### Lesson Learned
+
+When we plan ahead, we get better results
+
 - Index columns used with
 	- Order by
 	- Where
   - Group by
+
+Note:
+- Planning ahead = indexing
 ---
 
 - More complex query
-- Result illustrating principle
 
 ```
-EXPLAIN
 SELECT *
 FROM "emails-text" AS E
 JOIN "travel-disclosures" AS T ON T."FilerName" = E."name"
@@ -233,7 +268,6 @@ WHERE T."MemberName" = 'McCarthy, Kevin'
 ORDER BY E."year" DESC
 LIMIT 100;
 ```
----
 
 ```                                                        QUERY PLAN                                                        
 --------------------------------------------------------------------------------------------------------------------------
@@ -247,21 +281,26 @@ LIMIT 100;
 (7 rows)
 ```
 
+Note:
 - Note the filters and full table scan
 ---
 
 - B-Tree good when we don't know the usage pattern, but what if we do?
-	- We can plan ahead for specific usages (names equal)
+	- We can plan ahead better
+
+Note:
+Usage pattern is exact name match on query
 ---
 
-- Hash indexes
-	- Optimized for equality checks
+#### Hash Indexes
 
 ```
-CREATE INDEX "travel-disclosures-MemberName-hash" ON "travel-disclosures" USING HASH ("MemberName");
-CREATE INDEX "emails-text-name-hash" ON "emails-text" USING HASH ("name");
+CREATE INDEX "travel-disclosures-MemberName-hash"
+  ON "travel-disclosures" USING HASH ("MemberName");
+
+CREATE INDEX "emails-text-name-hash"
+  ON "emails-text" USING HASH ("name");
 ```
----
 
 - Re-run query
 
@@ -283,22 +322,31 @@ CREATE INDEX "emails-text-name-hash" ON "emails-text" USING HASH ("name");
 ```
 ---
 
+<img style="max-height: 50%" src="media/hash-table.svg" />
+
 - Hash indexes great where you're doing direct comparisons and lookups
 	- `"MemberName" = 'McCarthy, Kevin'`
+
+<span style="font-size: 0.4em;">Image Attribution: By Jorge Stolfi - Own work, CC BY-SA 3.0, https://commons.wikimedia.org/w/index.php?curid=6471238</span>
+
 ---
 
-- Optimization Principle: Do things in steps
-	- Materialized views
-		- Pre-computed table
-	- Related principle: do things once
+#### Optimization Principle
+
+## Do things in steps
+
+- Materialized views
+  - Pre-computed table
+- Related principle: do things once
 ---
 
 - New query:
-	- "Top Travelers' Emails op to a Week After a Travel"
 
 ```
 CREATE FUNCTION FIRSTLAST(text) RETURNS text AS $$
-	SELECT REGEXP_REPLACE(REGEXP_REPLACE($1,'[^A-Za-z\.,\s]', ''), '^([^\s]+), ([^\s]+)\s*.*',  '\2 \1');
+	SELECT REGEXP_REPLACE(
+	  REGEXP_REPLACE($1,'[^A-Za-z\.,\s]', ''),
+	    '^([^\s]+), ([^\s]+)\s*.*',  '\2 \1');
 $$ LANGUAGE SQL;
 
 ```
@@ -316,6 +364,10 @@ WHERE
 	(E."date"::TIMESTAMPTZ - T."ReturnDate"::TIMESTAMPTZ) < '1 week'::interval
 	AND (E."date"::TIMESTAMPTZ - T."ReturnDate"::TIMESTAMPTZ) > '0 days'::interval;
 ```
+
+Note:
+- New query
+- "Top Travelers' Emails op to a Week After a Travel"
 ---
 
 ```                                   QUERY PLAN                                                                                                               			-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -362,18 +414,19 @@ WHERE "since-return" > '0 days'::interval
 	AND "since-return" < '1 week'::interval;
 
 ```
----
 
-```                                                             QUERY PLAN                                                             
+```
+                                                             QUERY PLAN                                                             
 ------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using "email-travel-return-diff-since-return" on "email-travel-return-diff" et  (cost=0.42..658.35 rows=301 width=1032)
    Index Cond: (("since-return" > '00:00:00'::interval) AND ("since-return" < '7 days'::interval))
 (2 rows)
+```
+
+---
 
 - We can do exploratory analysis in optimized environment
 	- Build from there
-```
----
 
 ```
 SELECT *
@@ -393,18 +446,23 @@ WHERE "since-return" > '0 days'::interval
 ```
 ---
 
+#### Optimization Principle
 
-- Optimization Principles: Right tool for the job (pt. 1)
-	- Inverted Indexing
-		- Elasticsearch, NoSQL, Custom DBs
+### Right tool for the job
+
+- Inverted Indexing
+  - Elasticsearch, NoSQL, Custom DBs
 
 ```
 ALTER TABLE "emails-text"
-    ADD COLUMN "search-index-column" tsvector
-               GENERATED ALWAYS AS (to_tsvector('english', coalesce("subject", '') || ' ' || coalesce("body", ''))) STORED;
+  ADD COLUMN "search-index-column" tsvector
+    GENERATED ALWAYS AS (
+      to_tsvector('english',
+        coalesce("subject", '') || ' ' || coalesce("body", ''))
+    ) STORED;
 CREATE INDEX "search-index-column-gin" ON "emails-text" USING GIN ("search-index-column");
-
 ```
+
 ---
 
 - Let's do full text search against the table
@@ -415,7 +473,6 @@ FROM "emails-text"
 WHERE "search-index-column" @@ TO_TSQUERY('climate & fraud');
 
 ```
----
 
 ```                                       QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
@@ -427,14 +484,16 @@ WHERE "search-index-column" @@ TO_TSQUERY('climate & fraud');
 ```
 ---
 
-- Optimization Principles: Right tool for the job (pt. 2)
-	- NoSQL
-	- Key value lookup
-	- Optimization based around finding ideal key structure
+#### Optimization Principle
+
+### Right tool for the job
+
+- NoSQL
+- Key value lookup
+- Optimization based around finding ideal key structure
 ---
 
-- Here's a Postgres JSON Key-Value Lookup
-	- Not optimized
+Here's a Postgres JSON Key-Value Lookup
 
 ```
 SELECT *
@@ -442,7 +501,8 @@ FROM "stocks"
 WHERE "jdoc" @> '{"cap_gains_over_200_usd": true}'::JSONB;
 
 ```
----
+
+Not optimized
 
 ```                          QUERY PLAN                           
 ---------------------------------------------------------------
@@ -451,12 +511,13 @@ WHERE "jdoc" @> '{"cap_gains_over_200_usd": true}'::JSONB;
 (2 rows)
 ```
 
+---
+
 ```
 CREATE INDEX "stocks-index-gin" ON "stocks" USING GIN ("jdoc");
 ```
 
 - Re-run
----
 
 ```                                     QUERY PLAN                                      
 -------------------------------------------------------------------------------------
@@ -547,7 +608,7 @@ WHERE "jdoc" ? 'comment' and ("jdoc"->'comment')::text != '"--"';
 			// - https://revealjs.com/config/
 			Reveal.initialize({
 				hash: true,
-
+        slideNumber: true,
 				// Learn about plugins: https://revealjs.com/plugins/
 				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes ]
 			});

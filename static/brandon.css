@@ -39,7 +39,10 @@ section.has-light-background, section.has-light-background h1, section.has-light
   --r-heading3-size: 1.55em;
   --r-heading4-size: 1em;
   --r-code-font: monospace;
-  --r-link-color: #268bd2;
+  --r-link-color: #ff8fd2;
+  --r-selection-background-color: #d33682;
+  --r-selection-color: #fff;
+  
   --r-link-color-dark: #1a6091;
   --r-link-color-hover: #78b9e6;
   --r-selection-background-color: #d33682;
@@ -140,7 +143,7 @@ section.has-light-background, section.has-light-background h1, section.has-light
 .reveal video,
 .reveal iframe {
   max-width: 95%;
-  max-height: 95%;
+  max-height: 70vh;
 }
 
 .reveal strong,
