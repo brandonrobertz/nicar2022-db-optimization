@@ -28,12 +28,12 @@
 ### Um Yes Hello
 - I'm Brandon Roberts
 - Data Journalist / Open Source Developer
-- Freelance: bxroberts.org
+- Freelance: [bxroberts.org](https://bxroberts.org)
 
-[https://tinyurl.com/3xm24bn2](https://colab.research.google.com/drive/1LqxhsN9YwhFVWCA4uzIJfCja-cl5LuCm?usp=sharing)
+[https://bxroberts.org/nicar2022](https://colab.research.google.com/drive/1LqxhsN9YwhFVWCA4uzIJfCja-cl5LuCm#scrollTo=NfQWojEOvLwZ)
 
 ```
-git clone https://github.com/brandonrobertz/nicar2022
+git clone https://github.com/brandonrobertz/nicar2022-db-optimization
 ```
 ---
 
@@ -200,7 +200,6 @@ Note:
 - Example of query resulting in nested scan
 
 ```
-EXPLAIN 
 SELECT *
 FROM "emails-text" AS E
 JOIN "travel-disclosures" AS T ON T."Year" = E."year"
